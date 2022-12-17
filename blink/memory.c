@@ -21,6 +21,7 @@
 #include <string.h>
 
 #include "blink/assert.h"
+#include "blink/bitscan.h"
 #include "blink/debug.h"
 #include "blink/endian.h"
 #include "blink/likely.h"
@@ -29,6 +30,12 @@
 #include "blink/mop.h"
 #include "blink/pml4t.h"
 #include "blink/stats.h"
+
+// returns 0x80 for each byte that's equal
+static u64 CompareEq(u64 x, u64 y) {
+  u64 w = x ^ y;
+  return (w = ~w & (w - 0x0101010101010101) & 0x8080808080808080);
+}
 
 void SetReadAddr(struct Machine *m, i64 addr, u32 size) {
   if (size) {
@@ -71,21 +78,77 @@ u64 HandlePageFault(struct Machine *m, u64 entry, u64 table, unsigned index) {
   }
 }
 
-static u64 FindPageTableEntry(struct Machine *m, u64 page) {
-  long i;
-  i64 table;
-  u64 entry, res;
-  unsigned level, index;
-  struct MachineTlb bubble;
-  for (i = 1; i < ARRAYLEN(m->tlb); ++i) {
-    if (m->tlb[i].page == page && ((res = m->tlb[i].entry) & PAGE_V)) {
+static inline u64 GetTlbKey(i64 page) {
+  return (page & 0xff000) >> 12;
+}
+
+static void SetTlbEntry(struct Machine *m, unsigned i, struct TlbEntry e) {
+  m->tlb.key[i / 8] = (m->tlb.key[i / 8] & ~(0xFFull << (i % 8 * 8))) |
+                      GetTlbKey(e.page) << (i % 8 * 8);
+  m->tlb.entry[i] = e;
+}
+
+static u64 GetTlbEntry(struct Machine *m, i64 page) {
+  unsigned i;
+  if (m->tlb.entry[0].page == page) {
+    STATISTIC(++tlb_hits_1);
+    return m->tlb.entry[0].entry;
+  }
+#if defined(__GNUC__) && defined(__x86_64__)
+  typedef unsigned char tlb_key_t
+      __attribute__((__vector_size__(16), __aligned__(16)));
+  u8 k = GetTlbKey(page);
+  i = __builtin_ia32_pmovmskb128(
+      *(tlb_key_t *)m->tlb.key ==
+      (tlb_key_t){k, k, k, k, k, k, k, k, k, k, k, k, k, k, k, k});
+  while (i) {
+    unsigned j = bsr(i);
+    if (m->tlb.entry[j].page == page) {
       STATISTIC(++tlb_hits_2);
-      bubble = m->tlb[i - 1];
-      m->tlb[i - 1] = m->tlb[i];
-      m->tlb[i] = bubble;
-      return res;
+      unassert(j > 0);
+      struct TlbEntry e = m->tlb.entry[j];
+      SetTlbEntry(m, j, m->tlb.entry[j - 1]);
+      SetTlbEntry(m, j - 1, e);
+      return e.entry;
+    }
+    i &= ~(1 << j);
+  }
+#else
+  for (i = 0; i < kTlbEntries / 8; ++i) {
+    u64 key = CompareEq(m->tlb.key[i], GetTlbKey(page) * 0x0101010101010101);
+    while (key) {
+      unsigned j = bsr(key) >> 3;
+      unsigned k = i * 8 + j;
+      if (m->tlb.entry[k].page == page) {
+        STATISTIC(++tlb_hits_2);
+        unassert(k > 0);
+        struct TlbEntry e = m->tlb.entry[k];
+        SetTlbEntry(m, k, m->tlb.entry[k - 1]);
+        SetTlbEntry(m, k - 1, e);
+        return e.entry;
+      }
+      key &= ~(0xFFull << (j * 8));
     }
   }
+#endif
+  return 0;
+}
+
+static u64 FindPageTableEntry(struct Machine *m, i64 page) {
+  i64 table;
+  u64 entry;
+  unsigned level, index;
+  _Static_assert(IS2POW(kTlbEntries), "");
+  _Static_assert(kTlbEntries % 8 == 0, "");
+  if (!atomic_load_explicit(&m->invalidated, memory_order_relaxed)) {
+    if ((entry = GetTlbEntry(m, page))) {
+      return entry;
+    }
+  } else {
+    ResetTlb(m);
+    atomic_store_explicit(&m->invalidated, false, memory_order_relaxed);
+  }
+  if (!(-0x800000000000 <= page && page < 0x800000000000)) return 0;
   STATISTIC(++tlb_misses);
   unassert((entry = m->system->cr3));
   level = 39;
@@ -99,27 +162,15 @@ static u64 FindPageTableEntry(struct Machine *m, u64 page) {
       !(entry = HandlePageFault(m, entry, table, index))) {
     return 0;
   }
-  m->tlb[ARRAYLEN(m->tlb) - 1].page = page;
-  m->tlb[ARRAYLEN(m->tlb) - 1].entry = entry;
+  SetTlbEntry(m, kTlbEntries - 1, (struct TlbEntry){page, entry});
   return entry;
 }
 
 u8 *LookupAddress(struct Machine *m, i64 virt) {
   u8 *host;
-  u64 entry, page;
+  u64 entry;
   if (m->mode != XED_MODE_REAL) {
-    if (atomic_load_explicit(&m->invalidated, memory_order_relaxed)) {
-      ResetTlb(m);
-      atomic_store_explicit(&m->invalidated, false, memory_order_relaxed);
-    }
-    if ((page = virt & -4096) == m->tlb[0].page &&
-        ((entry = m->tlb[0].entry) & PAGE_V)) {
-      STATISTIC(++tlb_hits_1);
-    } else if (-0x800000000000 <= virt && virt < 0x800000000000) {
-      if (!(entry = FindPageTableEntry(m, page))) return 0;
-    } else {
-      return 0;
-    }
+    if (!(entry = FindPageTableEntry(m, virt & -4096))) return 0;
   } else if (virt >= 0 && virt <= 0xffffffff &&
              (virt & 0xffffffff) + 4095 < kRealSize) {
     return m->system->real + virt;

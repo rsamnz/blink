@@ -27,11 +27,6 @@
 #include "blink/util.h"
 
 int main(int argc, char *argv[]) {
-  u8 A[] = {20, 20, 0, 0, 20, 20, 0, 0, 20, 20};
-  int i, n = Magikarp(A, ARRAYLEN(A));
-  for (i = 0; i < n; ++i) {
-    if (i) printf(", ");
-    printf("%d", A[i]);
-  }
-  printf("\n");
+  volatile int *x = (int *)0x0fffffffffffffff;
+  return *x;
 }

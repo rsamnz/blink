@@ -64,6 +64,7 @@
 #define kStackSize  (8 * 1024 * 1024)
 #define kMinBrk     (2 * 1024 * 1024)
 #define kMinBlinkFd 100
+#define kTlbEntries 16
 
 #define PAGE_V    0x0001  // valid
 #define PAGE_RW   0x0002  // writeable
@@ -240,112 +241,117 @@ struct JitPath {
   struct JitBlock *jb;
 };
 
-struct MachineTlb {
+struct TlbEntry {
   i64 page;
   u64 entry;
 };
 
-struct Machine {                           //
-  u64 ip;                                  // instruction pointer
-  u64 oldip;                               // ip saved at start of op, or -1
-  i64 stashaddr;                           // page overlap buffer
-  u32 flags;                               // x86 eflags register
-  bool reserving;                          // did it call ReserveAddress?
-  _Atomic(bool) invalidated;               // the tlb must be flushed
-  _Atomic(bool) nolinear;                  // [dup] no linear address resolution
-  _Atomic(bool) killed;                    // used to send a soft SIGKILL
-  u8 mode;                                 // [dup] XED_MODE_{REAL,LEGACY,LONG}
-  _Atomic(int) *fun;                       // [dup] jit hooks for code bytes
-  unsigned long codesize;                  // [dup] size of exe code section
-  i64 codestart;                           // [dup] virt of exe code section
-  union {                                  // GENERAL REGISTER FILE
-    u64 align8_;                           //
-    u8 beg[128];                           //
-    u8 weg[16][8];                         //
-    struct {                               //
-      union {                              //
-        u8 ax[8];                          // [vol] accumulator, result:1/2
-        struct {                           //
-          u8 al;                           // lo byte of ax
-          u8 ah;                           // hi byte of ax
-        };                                 //
-      };                                   //
-      union {                              //
-        u8 cx[8];                          // [vol] param:4/6
-        struct {                           //
-          u8 cl;                           // lo byte of cx
-          u8 ch;                           // hi byte of cx
-        };                                 //
-      };                                   //
-      union {                              //
-        u8 dx[8];                          // [vol] param:3/6, result:2/2
-        struct {                           //
-          u8 dl;                           // lo byte of dx
-          u8 dh;                           // hi byte of dx
-        };                                 //
-      };                                   //
-      union {                              //
-        u8 bx[8];                          // [sav] base index
-        struct {                           //
-          u8 bl;                           // lo byte of bx
-          u8 bh;                           // hi byte of bx
-        };                                 //
-      };                                   //
-      u8 sp[8];                            // [sav] stack pointer
-      u8 bp[8];                            // [sav] backtrace pointer
-      u8 si[8];                            // [vol] param:2/6
-      u8 di[8];                            // [vol] param:1/6
-      u8 r8[8];                            // [vol] param:5/6
-      u8 r9[8];                            // [vol] param:6/6
-      u8 r10[8];                           // [vol]
-      u8 r11[8];                           // [vol]
-      u8 r12[8];                           // [sav]
-      u8 r13[8];                           // [sav]
-      u8 r14[8];                           // [sav]
-      u8 r15[8];                           // [sav]
-    };                                     //
-  };                                       //
-  _Alignas(64) struct MachineTlb tlb[16];  // TRANSLATION LOOKASIDE BUFFER
-  _Alignas(16) u8 xmm[16][16];             // 128-BIT VECTOR REGISTER FILE
-  struct XedDecodedInst *xedd;             // ->opcache->icache if non-jit
-  i64 readaddr;                            // so tui can show memory reads
-  i64 writeaddr;                           // so tui can show memory write
-  u32 readsize;                            // bytes length of last read op
-  u32 writesize;                           // byte length of last write op
-  union {                                  //
-    u64 seg[8];                            //
-    struct {                               //
-      u64 es;                              // xtra segment (legacy / real)
-      u64 cs;                              // code segment (legacy / real)
-      u64 ss;                              // stak segment (legacy / real)
-      u64 ds;                              // data segment (legacy / real)
-      u64 fs;                              // thred-local segment register
-      u64 gs;                              // winple thread-local register
-    };                                     //
-  };                                       //
-  struct MachineFpu fpu;                   // FLOATING-POINT REGISTER FILE
-  u32 mxcsr;                               // SIMD status control register
-  pthread_t thread;                        // POSIX thread of this machine
-  struct FreeList freelist;                // to make system calls simpler
-  struct JitPath path;                     // under construction jit route
-  i64 bofram[2];                           // helps debug bootloading code
-  i64 faultaddr;                           // used for tui error reporting
-  _Atomicish(u64) signals;                 // signals waiting for delivery
-  _Atomicish(u64) sigmask;                 // signals that've been blocked
-  u32 tlbindex;                            //
-  int sig;                                 // signal under active delivery
-  u64 siguc;                               // hosted address of ucontext_t
-  u64 sigfp;                               // virtual address of fpstate_t
-  struct System *system;                   //
-  bool canhalt;                            //
-  bool metal;                              //
-  jmp_buf onhalt;                          //
-  i64 ctid;                                //
-  int tid;                                 //
-  sigset_t spawn_sigmask;                  //
-  struct Dll elem;                         //
-  struct OpCache opcache[1];               //
-};                                         //
+struct Tlb {
+  _Alignas(16) u64 key[kTlbEntries / 8];
+  struct TlbEntry entry[kTlbEntries];
+};
+
+struct Machine {                //
+  u64 ip;                       // instruction pointer
+  u64 oldip;                    // ip saved at start of op, or -1
+  i64 stashaddr;                // page overlap buffer
+  u32 flags;                    // x86 eflags register
+  bool reserving;               // did it call ReserveAddress?
+  _Atomic(bool) invalidated;    // the tlb must be flushed
+  _Atomic(bool) nolinear;       // [dup] no linear address resolution
+  _Atomic(bool) killed;         // used to send a soft SIGKILL
+  u8 mode;                      // [dup] XED_MODE_{REAL,LEGACY,LONG}
+  _Atomic(int) *fun;            // [dup] jit hooks for code bytes
+  unsigned long codesize;       // [dup] size of exe code section
+  i64 codestart;                // [dup] virt of exe code section
+  union {                       // GENERAL REGISTER FILE
+    u64 align8_;                //
+    u8 beg[128];                //
+    u8 weg[16][8];              //
+    struct {                    //
+      union {                   //
+        u8 ax[8];               // [vol] accumulator, result:1/2
+        struct {                //
+          u8 al;                // lo byte of ax
+          u8 ah;                // hi byte of ax
+        };                      //
+      };                        //
+      union {                   //
+        u8 cx[8];               // [vol] param:4/6
+        struct {                //
+          u8 cl;                // lo byte of cx
+          u8 ch;                // hi byte of cx
+        };                      //
+      };                        //
+      union {                   //
+        u8 dx[8];               // [vol] param:3/6, result:2/2
+        struct {                //
+          u8 dl;                // lo byte of dx
+          u8 dh;                // hi byte of dx
+        };                      //
+      };                        //
+      union {                   //
+        u8 bx[8];               // [sav] base index
+        struct {                //
+          u8 bl;                // lo byte of bx
+          u8 bh;                // hi byte of bx
+        };                      //
+      };                        //
+      u8 sp[8];                 // [sav] stack pointer
+      u8 bp[8];                 // [sav] backtrace pointer
+      u8 si[8];                 // [vol] param:2/6
+      u8 di[8];                 // [vol] param:1/6
+      u8 r8[8];                 // [vol] param:5/6
+      u8 r9[8];                 // [vol] param:6/6
+      u8 r10[8];                // [vol]
+      u8 r11[8];                // [vol]
+      u8 r12[8];                // [sav]
+      u8 r13[8];                // [sav]
+      u8 r14[8];                // [sav]
+      u8 r15[8];                // [sav]
+    };                          //
+  };                            //
+  _Alignas(16) u8 xmm[16][16];  // 128-BIT VECTOR REGISTER FILE
+  struct Tlb tlb;               // TRANSLATION LOOKASIDE BUFFER
+  struct XedDecodedInst *xedd;  // ->opcache->icache if non-jit
+  i64 readaddr;                 // so tui can show memory reads
+  i64 writeaddr;                // so tui can show memory write
+  u32 readsize;                 // bytes length of last read op
+  u32 writesize;                // byte length of last write op
+  union {                       //
+    u64 seg[8];                 //
+    struct {                    //
+      u64 es;                   // xtra segment (legacy / real)
+      u64 cs;                   // code segment (legacy / real)
+      u64 ss;                   // stak segment (legacy / real)
+      u64 ds;                   // data segment (legacy / real)
+      u64 fs;                   // thred-local segment register
+      u64 gs;                   // winple thread-local register
+    };                          //
+  };                            //
+  struct MachineFpu fpu;        // FLOATING-POINT REGISTER FILE
+  u32 mxcsr;                    // SIMD status control register
+  pthread_t thread;             // POSIX thread of this machine
+  struct FreeList freelist;     // to make system calls simpler
+  struct JitPath path;          // under construction jit route
+  i64 bofram[2];                // helps debug bootloading code
+  i64 faultaddr;                // used for tui error reporting
+  _Atomicish(u64) signals;      // signals waiting for delivery
+  _Atomicish(u64) sigmask;      // signals that've been blocked
+  u32 tlbindex;                 //
+  int sig;                      // signal under active delivery
+  u64 siguc;                    // hosted address of ucontext_t
+  u64 sigfp;                    // virtual address of fpstate_t
+  struct System *system;        //
+  bool canhalt;                 //
+  bool metal;                   //
+  jmp_buf onhalt;               //
+  i64 ctid;                     //
+  int tid;                      //
+  sigset_t spawn_sigmask;       //
+  struct Dll elem;              //
+  struct OpCache opcache[1];    //
+};                              //
 
 extern _Thread_local struct Machine *g_machine;
 
