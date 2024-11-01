@@ -2359,7 +2359,7 @@ static i64 SysRead(struct Machine *m, i32 fildes, i64 addr, u64 size) {
   if (size) {
     InitIovs(&iv);
     if ((rc = AppendIovsReal(m, &iv, addr, size, PROT_WRITE)) != -1) {
-      RESTARTABLE(rc = readv_impl(fildes, iv.p, iv.i));
+      RESTARTABLE(rc = readv_impl(fildes, iv.p, iv.i)); ///rsnote: this is where [addr] gets everything read into of [size]
       if (rc != -1) SetWriteAddr(m, addr, rc);
     }
     FreeIovs(&iv);
