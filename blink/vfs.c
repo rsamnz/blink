@@ -1596,6 +1596,7 @@ ssize_t VfsPwrite(int fd, const void *buf, size_t nbyte, off_t offset) {
 }
 
 ssize_t VfsReadv(int fd, const struct iovec *iov, int iovcnt) {
+  //asm("int3; nop"); ///RSNOTE: the cb->readv callback!
   struct VfsInfo *info;
   int ret;
   VFS_LOGF("VfsReadv(%d, %p, %d)", fd, iov, iovcnt);

@@ -186,7 +186,7 @@ const struct FdCb kFdCbHost = {
 #ifdef __EMSCRIPTEN__
     .readv = em_readv,
 #else
-    .readv = VfsReadv,
+    .readv = VfsReadv, ///RSNOTE: Im sure this is the callback
 #endif
     .writev = VfsWritev,
 #ifdef __EMSCRIPTEN__
@@ -2338,6 +2338,15 @@ static int SysGetsockopt(struct Machine *m, i32 fildes, i32 level, i32 optname,
 }
 
 static i64 SysRead(struct Machine *m, i32 fildes, i64 addr, u64 size) {
+  //asm("int3; nop");
+  /* RSNOTE
+  Since SysRead relies on an active and valid file descriptor, it looks
+  through the vm Machines current file descriptors to find the match for the
+  function parameter above (ie i32 fildes).
+
+  Therefore fd->cb->ready, and therefore readv_impl works by whatever callback
+  was set during the initialisation of the fildes, maybe in the first SysOpen. */
+
   i64 rc;
   int oflags;
   struct Fd *fd;
@@ -2345,9 +2354,9 @@ static i64 SysRead(struct Machine *m, i32 fildes, i64 addr, u64 size) {
   ssize_t (*readv_impl)(int, const struct iovec *, int);
   if (size > NUMERIC_MAX(size_t)) return eoverflow();
   LOCK(&m->system->fds.lock);
-  if ((fd = GetFd(&m->system->fds, fildes))) {
+  if ((fd = GetFd(&m->system->fds, fildes))) { ///rsnote: sets read_impl [fds.c:75]
     unassert(fd->cb);
-    unassert(readv_impl = fd->cb->readv);
+    unassert(readv_impl = fd->cb->readv); ///rsnote: read_impl set to fd->cv->readv callback
     oflags = fd->oflags;
   } else {
     readv_impl = 0;
@@ -2359,7 +2368,13 @@ static i64 SysRead(struct Machine *m, i32 fildes, i64 addr, u64 size) {
   if (size) {
     InitIovs(&iv);
     if ((rc = AppendIovsReal(m, &iv, addr, size, PROT_WRITE)) != -1) {
-      RESTARTABLE(rc = readv_impl(fildes, iv.p, iv.i)); ///rsnote: this is where [addr] gets everything read into of [size]
+      RESTARTABLE(rc = readv_impl(fildes, iv.p, iv.i)); 
+      /* RSNOTE:
+      Therefore the initial construction of the file descriptors itself tells
+      SysRead/Read _how_ to access the resource?
+
+      this is where [addr] gets everything read into of [size] */
+      printf("[%8x]: %x\n", addr, rc);
       if (rc != -1) SetWriteAddr(m, addr, rc);
     }
     FreeIovs(&iv);

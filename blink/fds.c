@@ -18,6 +18,8 @@
 ╚─────────────────────────────────────────────────────────────────────────────*/
 #include "blink/fds.h"
 
+#include <signal.h>
+
 #include <fcntl.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -46,6 +48,9 @@ struct Fd *AddFd(struct Fds *fds, int fildes, int oflags) {
   if (fildes >= 0) {
     if ((fd = (struct Fd *)calloc(1, sizeof(*fd)))) {
       dll_init(&fd->elem);
+
+      //asm("int3; nop"); ///RSNOTE: this is where the callback is set
+
       fd->cb = &kFdCbHost;
       fd->fildes = fildes;
       fd->oflags = oflags;
@@ -83,6 +88,9 @@ struct Fd *GetFd(struct Fds *fds, int fildes) {
           dll_remove(&fds->list, e);
           dll_make_first(&fds->list, e);
         }
+
+        //asm("int3; nop"); ///RSNOTE
+
         return FD_CONTAINER(e);
       }
       lru = true;

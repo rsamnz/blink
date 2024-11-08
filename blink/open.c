@@ -106,6 +106,12 @@ static int SysTmpfile(struct Machine *m, i32 dirfildes, i64 pathaddr,
 
 int SysOpenat(struct Machine *m, i32 dirfildes, i64 pathaddr, i32 oflags,
               i32 mode) {
+
+  //asm("int3; nop");
+  /* RSNOTE
+  The way this sets up the file descritor should also tell it how it should be
+  read? through cb->ready? which is what gets used in SysRead? */
+
   int lim;
   int fildes;
   int sysflags;
@@ -148,5 +154,7 @@ int SysOpenat(struct Machine *m, i32 dirfildes, i64 pathaddr, i32 oflags,
     }
 #endif
   }
+
+  //asm("int3; nop"); ///RSNOTE
   return fildes;
 }
