@@ -1596,7 +1596,7 @@ ssize_t VfsPwrite(int fd, const void *buf, size_t nbyte, off_t offset) {
 }
 
 ssize_t VfsReadv(int fd, const struct iovec *iov, int iovcnt) {
-  //asm("int3; nop"); ///RSNOTE: the cb->readv callback!
+  asm("int3; nop"); ///RSNOTE: the cb->readv callback!
   struct VfsInfo *info;
   int ret;
   VFS_LOGF("VfsReadv(%d, %p, %d)", fd, iov, iovcnt);
@@ -1604,7 +1604,7 @@ ssize_t VfsReadv(int fd, const struct iovec *iov, int iovcnt) {
     return -1;
   }
   if (info->device->ops->Readv) {
-    ret = info->device->ops->Readv(info, iov, iovcnt);
+    ret = info->device->ops->Readv(info, iov, iovcnt); ///RSNOTE: this is what reads it?
   } else {
     ret = eperm();
   }

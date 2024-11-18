@@ -11,6 +11,8 @@ int main(int argc, char **argv) {
     ssize_t bytes = read(fd, &buffer, sizeof(buffer));
     printf("buffer: \"%s\"\nread: %ld bytes in total\n", buffer, bytes);
 
+    printf("buffer[0] addr: %x\n", buffer);
+
     return 0;
 }
 

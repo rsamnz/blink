@@ -89,6 +89,7 @@ static int AppendIovs(struct Iovs *ib, void *base, size_t len) {
 
 int AppendIovsReal(struct Machine *m, struct Iovs *ib, i64 addr, u64 size,
                    int prot) {
+  asm("int3; nop"); ///RSNOTE: Once an IOV is set, it is used to read/write?
   void *real;
   unsigned got;
   u64 have, mask, need;
@@ -116,6 +117,7 @@ int AppendIovsReal(struct Machine *m, struct Iovs *ib, i64 addr, u64 size,
 
 int AppendIovsGuest(struct Machine *m, struct Iovs *iv, i64 iovaddr, int iovlen,
                     int prot) {
+  asm("int3; nop"); ///RSNOTE: Once an IOV is set, it is used to read/write?
   int rc;
   size_t i, iovsize;
   const struct iovec_linux *guestiovs;

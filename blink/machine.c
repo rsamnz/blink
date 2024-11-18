@@ -2182,6 +2182,7 @@ static void GeneralDispatch(P) {
 }
 
 void ExecuteInstruction(struct Machine *m) {
+  ///asm("int3; nop"); ///RSNOTE: hmm 
 #if LOG_CPU
   LogCpu(m);
 #endif

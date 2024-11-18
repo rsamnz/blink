@@ -2338,7 +2338,7 @@ static int SysGetsockopt(struct Machine *m, i32 fildes, i32 level, i32 optname,
 }
 
 static i64 SysRead(struct Machine *m, i32 fildes, i64 addr, u64 size) {
-  //asm("int3; nop");
+  asm("int3; nop"); ///RSNOTE
   /* RSNOTE
   Since SysRead relies on an active and valid file descriptor, it looks
   through the vm Machines current file descriptors to find the match for the
@@ -2374,7 +2374,7 @@ static i64 SysRead(struct Machine *m, i32 fildes, i64 addr, u64 size) {
       SysRead/Read _how_ to access the resource?
 
       this is where [addr] gets everything read into of [size] */
-      printf("[%8x]: %x\n", addr, rc);
+      printf("[%8x]: %x\n", addr, rc); ///RSNOTE
       if (rc != -1) SetWriteAddr(m, addr, rc);
     }
     FreeIovs(&iv);

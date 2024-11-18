@@ -49,7 +49,7 @@ struct Fd *AddFd(struct Fds *fds, int fildes, int oflags) {
     if ((fd = (struct Fd *)calloc(1, sizeof(*fd)))) {
       dll_init(&fd->elem);
 
-      //asm("int3; nop"); ///RSNOTE: this is where the callback is set
+      ///asm("int3; nop"); ///RSNOTE: this is where the callback is set
 
       fd->cb = &kFdCbHost;
       fd->fildes = fildes;
@@ -89,7 +89,7 @@ struct Fd *GetFd(struct Fds *fds, int fildes) {
           dll_make_first(&fds->list, e);
         }
 
-        //asm("int3; nop"); ///RSNOTE
+        ///asm("int3; nop"); ///RSNOTE
 
         return FD_CONTAINER(e);
       }
